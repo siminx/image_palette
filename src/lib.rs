@@ -9,10 +9,30 @@ use image::{
 
 mod error;
 
+/// Open the image located at the path specified, return 16 dominant colors.
+///
+/// # Examples
+/// ```
+/// let colors = image_palette::load("test.jpg").unwrap();
+///
+/// for item in colors {
+///   println!("{}:{}", item.color(), item.count());
+/// }
+/// ```
 pub fn load(path: &str) -> Result<Vec<Record>, ImageError> {
     OcTree::load_with_maxcolor(path, 16)
 }
 
+/// Open the image located at the path specified, return {max_color} dominant colors.
+///
+/// # Examples
+/// ```
+/// let colors = image_palette::load_with_maxcolor("test.jpg", 32).unwrap();
+///
+/// for item in colors {
+///   println!("{}:{}", item.color(), item.count());
+/// }
+/// ```
 pub fn load_with_maxcolor(path: &str, max_color: u32) -> Result<Vec<Record>, ImageError> {
     OcTree::load_with_maxcolor(path, max_color)
 }
