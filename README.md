@@ -6,11 +6,11 @@ Using octree algorithm, thanks for [color-extraction](https://github.com/xiong35
 
 # Installation
 
-To use `image_palette` in your Rust project, add it to your `Cargo.toml`.
+To use `image-palette` in your Rust project, add it to your `Cargo.toml`.
 
 ```toml
 [dependencies]
-image_palette = "0.1.0"
+image-palette = "0.1.0"
 ```
 
 ## Usage
