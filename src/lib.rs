@@ -14,9 +14,9 @@ mod error;
 /// # Examples
 /// ```
 /// let (colors, width, height) = image_palette::load("test.jpg").unwrap();
-///
+/// println!("total: {}", width * height);
 /// for item in colors {
-///   println!("{}:{}", item.color(), item.count());
+///   println!("{}:{}", item.color().toHex(), item.count());
 /// }
 /// ```
 pub fn load(path: &str) -> Result<(Vec<Record>, u32, u32), ImageError> {
@@ -27,10 +27,10 @@ pub fn load(path: &str) -> Result<(Vec<Record>, u32, u32), ImageError> {
 ///
 /// # Examples
 /// ```
-/// let colors = image_palette::load_with_maxcolor("test.jpg", 32).unwrap();
-///
+/// let (colors, width, height) = image_palette::load_with_maxcolor("test.jpg", 32).unwrap();
+/// println!("total: {}", width * height);
 /// for item in colors {
-///   println!("{}:{}", item.color(), item.count());
+///   println!("{}:{}", item.color().toHex(), item.count());
 /// }
 /// ```
 pub fn load_with_maxcolor(
@@ -78,7 +78,7 @@ impl OcTree {
             }
         }
 
-        let mut map: HashMap<String, u32> = HashMap::new();
+        let mut map: HashMap<Color, u32> = HashMap::new();
         colors_stats(&root_share, &mut map);
         let mut list = Vec::new();
         for (color, count) in map {
@@ -172,13 +172,13 @@ impl OcTree {
     }
 }
 
-fn colors_stats(node_share: &Rc<RefCell<Node>>, map: &mut HashMap<String, u32>) {
+fn colors_stats(node_share: &Rc<RefCell<Node>>, map: &mut HashMap<Color, u32>) {
     let node = node_share.borrow_mut();
     if node.is_leaf {
-        let r = format!("{:0>2}", format!("{:X}", node.r / node.pixel_count));
-        let g = format!("{:0>2}", format!("{:X}", node.g / node.pixel_count));
-        let b = format!("{:0>2}", format!("{:X}", node.b / node.pixel_count));
-        let color = format!("#{}{}{}", r, g, b);
+        let r = (node.r / node.pixel_count) as u8;
+        let g = (node.g / node.pixel_count) as u8;
+        let b = (node.b / node.pixel_count) as u8;
+        let color = Color(r, g, b);
         if let Some(x) = map.get_mut(&color) {
             *x = *x + node.pixel_count;
         } else {
@@ -276,17 +276,26 @@ impl Node {
     }
 }
 
-#[derive(Debug)]
-struct Color(u8, u8, u8);
+#[derive(Debug, Clone, Eq, Hash, PartialEq)]
+pub struct Color(pub u8, pub u8, pub u8);
+
+impl Color {
+    pub fn to_hex(&self) -> String {
+        let r = format!("{:0>2}", format!("{:X}", self.0));
+        let g = format!("{:0>2}", format!("{:X}", self.1));
+        let b = format!("{:0>2}", format!("{:X}", self.1));
+        format!("#{}{}{}", r, g, b)
+    }
+}
 
 #[derive(Debug)]
 pub struct Record {
-    color: String,
+    color: Color,
     count: u32,
 }
 
 impl Record {
-    pub fn color(&self) -> &str {
+    pub fn color(&self) -> &Color {
         &self.color
     }
     pub fn count(&self) -> u32 {
