@@ -13,13 +13,13 @@ mod error;
 ///
 /// # Examples
 /// ```
-/// let colors = image_palette::load("test.jpg").unwrap();
+/// let (colors, width, height) = image_palette::load("test.jpg").unwrap();
 ///
 /// for item in colors {
 ///   println!("{}:{}", item.color(), item.count());
 /// }
 /// ```
-pub fn load(path: &str) -> Result<Vec<Record>, ImageError> {
+pub fn load(path: &str) -> Result<(Vec<Record>, u32, u32), ImageError> {
     OcTree::load_with_maxcolor(path, 16)
 }
 
@@ -33,7 +33,10 @@ pub fn load(path: &str) -> Result<Vec<Record>, ImageError> {
 ///   println!("{}:{}", item.color(), item.count());
 /// }
 /// ```
-pub fn load_with_maxcolor(path: &str, max_color: u32) -> Result<Vec<Record>, ImageError> {
+pub fn load_with_maxcolor(
+    path: &str,
+    max_color: u32,
+) -> Result<(Vec<Record>, u32, u32), ImageError> {
     OcTree::load_with_maxcolor(path, max_color)
 }
 
@@ -45,7 +48,10 @@ struct OcTree {
 }
 
 impl OcTree {
-    fn load_with_maxcolor(path: &str, max_color: u32) -> Result<Vec<Record>, ImageError> {
+    fn load_with_maxcolor(
+        path: &str,
+        max_color: u32,
+    ) -> Result<(Vec<Record>, u32, u32), ImageError> {
         const ARRAY_REPEAT_VALUE: Vec<Rc<RefCell<Node>>> = Vec::new();
         let mut tree = OcTree {
             leaf_num: 0,
@@ -79,7 +85,7 @@ impl OcTree {
             list.push(Record { color, count });
         }
         list.sort_by(|a, b| b.count.cmp(&a.count));
-        Ok(list)
+        Ok((list, image_data.width, image_data.height))
     }
 
     fn create_node(&mut self, level: usize) -> Rc<RefCell<Node>> {
@@ -211,7 +217,11 @@ impl From<&RgbImage> for ImageData {
                 pixels
             });
 
-        Self { data }
+        Self {
+            data,
+            width,
+            height,
+        }
     }
 }
 
@@ -228,12 +238,18 @@ impl From<&RgbaImage> for ImageData {
             },
         );
 
-        Self { data }
+        Self {
+            data,
+            width,
+            height,
+        }
     }
 }
 
 struct ImageData {
     data: Vec<Color>,
+    width: u32,
+    height: u32,
 }
 
 #[derive(Debug)]
