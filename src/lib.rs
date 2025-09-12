@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, path::Path, rc::Rc};
 
 use error::ImageError;
 use image::{
@@ -19,7 +19,10 @@ mod error;
 ///   println!("{}:{}", item.color().toHex(), item.count());
 /// }
 /// ```
-pub fn load(path: &str) -> Result<(Vec<Record>, u32, u32), ImageError> {
+pub fn load<P>(path: P) -> Result<(Vec<Record>, u32, u32), ImageError>
+where
+    P: AsRef<Path>,
+{
     OcTree::load_with_maxcolor(path, 16)
 }
 
@@ -33,10 +36,10 @@ pub fn load(path: &str) -> Result<(Vec<Record>, u32, u32), ImageError> {
 ///   println!("{}:{}", item.color().toHex(), item.count());
 /// }
 /// ```
-pub fn load_with_maxcolor(
-    path: &str,
-    max_color: u32,
-) -> Result<(Vec<Record>, u32, u32), ImageError> {
+pub fn load_with_maxcolor<P>(path: P, max_color: u32) -> Result<(Vec<Record>, u32, u32), ImageError>
+where
+    P: AsRef<Path>,
+{
     OcTree::load_with_maxcolor(path, max_color)
 }
 
@@ -48,10 +51,10 @@ struct OcTree {
 }
 
 impl OcTree {
-    fn load_with_maxcolor(
-        path: &str,
-        max_color: u32,
-    ) -> Result<(Vec<Record>, u32, u32), ImageError> {
+    fn load_with_maxcolor<P>(path: P, max_color: u32) -> Result<(Vec<Record>, u32, u32), ImageError>
+    where
+        P: AsRef<Path>,
+    {
         const ARRAY_REPEAT_VALUE: Vec<Rc<RefCell<Node>>> = Vec::new();
         let mut tree = OcTree {
             leaf_num: 0,
@@ -59,7 +62,7 @@ impl OcTree {
             max_color,
         };
 
-        let image = image::open(&path).map_err(|error| match error {
+        let image = image::open(path).map_err(|error| match error {
             Unsupported(error) => ImageError::UnsupportedFile(error),
             IoError(error) => ImageError::IoError(error),
             error => ImageError::Unknown(error),
