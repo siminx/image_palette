@@ -16,7 +16,7 @@ mod error;
 /// let (colors, width, height) = image_palette::load("test.jpg").unwrap();
 /// println!("total: {}", width * height);
 /// for item in colors {
-///   println!("{}:{}", item.color().toHex(), item.count());
+///   println!("{}:{}", item.color().to_hex(), item.count());
 /// }
 /// ```
 pub fn load<P>(path: P) -> Result<(Vec<Record>, u32, u32), ImageError>
@@ -33,7 +33,7 @@ where
 /// let (colors, width, height) = image_palette::load_with_maxcolor("test.jpg", 32).unwrap();
 /// println!("total: {}", width * height);
 /// for item in colors {
-///   println!("{}:{}", item.color().toHex(), item.count());
+///   println!("{}:{}", item.color().to_hex(), item.count());
 /// }
 /// ```
 pub fn load_with_maxcolor<P>(path: P, max_color: u32) -> Result<(Vec<Record>, u32, u32), ImageError>

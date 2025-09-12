@@ -10,7 +10,7 @@ To use `image-palette` in your Rust project, add it to your `Cargo.toml`.
 
 ```toml
 [dependencies]
-image-palette = "0.1.3"
+image-palette = "0.1"
 ```
 
 ## Usage
@@ -23,7 +23,7 @@ fn main() {
   let (colors, width, height) = image_palette::load("test.jpg").unwrap();
   println!("total: {}", width * height);
   for item in colors {
-    println!("{}:{}", item.color(), item.count());
+    println!("{}:{}", item.color().to_hex(), item.count());
   }
 }
 ```
