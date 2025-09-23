@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::HashMap, path::Path, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, path::Path, rc::Rc, str::FromStr};
 
 use error::ImageError;
 use image::{
@@ -15,8 +15,8 @@ mod error;
 /// ```
 /// let (colors, width, height) = image_palette::load("test.jpg").unwrap();
 /// println!("total: {}", width * height);
-/// for item in colors {
-///   println!("{}:{}", item.color().to_hex(), item.count());
+/// for color in colors {
+///   println!("{}: {}", color.rgb().to_hex(), color.count());
 /// }
 /// ```
 pub fn load<P>(path: P) -> Result<(Vec<Record>, u32, u32), ImageError>
@@ -30,10 +30,10 @@ where
 ///
 /// # Examples
 /// ```
-/// let (colors, width, height) = image_palette::load_with_maxcolor("test.jpg", 32).unwrap();
+/// let (colors, width, height) = image_palette::load_with_maxcolor("test.jpg", 8).unwrap();
 /// println!("total: {}", width * height);
-/// for item in colors {
-///   println!("{}:{}", item.color().to_hex(), item.count());
+/// for color in colors {
+///   println!("{}: {}", color.rgb().to_hex(), color.count());
 /// }
 /// ```
 pub fn load_with_maxcolor<P>(path: P, max_color: u32) -> Result<(Vec<Record>, u32, u32), ImageError>
@@ -81,11 +81,11 @@ impl OcTree {
             }
         }
 
-        let mut map: HashMap<Color, u32> = HashMap::new();
+        let mut map: HashMap<RGB, u32> = HashMap::new();
         colors_stats(&root_share, &mut map);
         let mut list = Vec::new();
-        for (color, count) in map {
-            list.push(Record { color, count });
+        for (rgb, count) in map {
+            list.push(Record { rgb, count });
         }
         list.sort_by(|a, b| b.count.cmp(&a.count));
         Ok((list, image_data.width, image_data.height))
@@ -108,17 +108,17 @@ impl OcTree {
         node_share
     }
 
-    fn add_color(&mut self, node_share: &Rc<RefCell<Node>>, color: Color, level: usize) {
+    fn add_color(&mut self, node_share: &Rc<RefCell<Node>>, rgb: RGB, level: usize) {
         let mut node: std::cell::RefMut<Node> = node_share.borrow_mut();
         if node.is_leaf {
             node.pixel_count += 1;
-            node.r += color.0 as u32;
-            node.g += color.1 as u32;
-            node.b += color.2 as u32;
+            node.r += rgb.r as u32;
+            node.g += rgb.g as u32;
+            node.b += rgb.b as u32;
         } else {
-            let r = color.0 >> (7 - level) & 1;
-            let g = color.1 >> (7 - level) & 1;
-            let b = color.2 >> (7 - level) & 1;
+            let r = rgb.r >> (7 - level) & 1;
+            let g = rgb.g >> (7 - level) & 1;
+            let b = rgb.b >> (7 - level) & 1;
 
             let idx = ((r << 2) + (g << 1) + b) as usize;
 
@@ -127,7 +127,7 @@ impl OcTree {
                 node.children[idx] = Some(child_share);
             }
 
-            self.add_color(node.children[idx].as_ref().unwrap(), color, level + 1);
+            self.add_color(node.children[idx].as_ref().unwrap(), rgb, level + 1);
         }
     }
 
@@ -175,17 +175,17 @@ impl OcTree {
     }
 }
 
-fn colors_stats(node_share: &Rc<RefCell<Node>>, map: &mut HashMap<Color, u32>) {
+fn colors_stats(node_share: &Rc<RefCell<Node>>, map: &mut HashMap<RGB, u32>) {
     let node = node_share.borrow_mut();
     if node.is_leaf {
         let r = (node.r / node.pixel_count) as u8;
         let g = (node.g / node.pixel_count) as u8;
         let b = (node.b / node.pixel_count) as u8;
-        let color = Color(r, g, b);
-        if let Some(x) = map.get_mut(&color) {
+        let rgb = RGB::from(&[r, g, b]);
+        if let Some(x) = map.get_mut(&rgb) {
             *x = *x + node.pixel_count;
         } else {
-            map.insert(color, node.pixel_count);
+            map.insert(rgb, node.pixel_count);
         }
     } else {
         for i in 0..8 {
@@ -216,7 +216,7 @@ impl From<&RgbImage> for ImageData {
         let data = image
             .pixels()
             .fold(Vec::with_capacity(size), |mut pixels, pixel| {
-                pixels.push(Color(pixel[0], pixel[1], pixel[2]));
+                pixels.push(RGB::from(&[pixel[0], pixel[1], pixel[2]]));
                 pixels
             });
 
@@ -236,7 +236,7 @@ impl From<&RgbaImage> for ImageData {
         let data = image.pixels().filter(|pixels| pixels[3] > 0).fold(
             Vec::with_capacity(size),
             |mut pixels, pixel| {
-                pixels.push(Color(pixel[0], pixel[1], pixel[2]));
+                pixels.push(RGB::from(&[pixel[0], pixel[1], pixel[2]]));
                 pixels
             },
         );
@@ -249,8 +249,49 @@ impl From<&RgbaImage> for ImageData {
     }
 }
 
+#[derive(Debug, Clone, Eq, Hash, PartialEq)]
+pub struct RGB {
+    r: u8,
+    g: u8,
+    b: u8,
+}
+
+impl RGB {
+    pub fn from(rgb: &[u8; 3]) -> RGB {
+        RGB {
+            r: rgb[0],
+            g: rgb[1],
+            b: rgb[2],
+        }
+    }
+
+    pub fn to_hex(&self) -> String {
+        let r = format!("{:0>2}", format!("{:X}", self.r));
+        let g = format!("{:0>2}", format!("{:X}", self.g));
+        let b = format!("{:0>2}", format!("{:X}", self.b));
+        format!("#{}{}{}", r, g, b)
+    }
+
+    #[cfg(feature = "lab")]
+    pub fn to_lab(&self) -> lab::Lab {
+        lab::Lab::from_rgb(&[self.r, self.g, self.b])
+    }
+}
+
+impl FromStr for RGB {
+    type Err = std::num::ParseIntError;
+
+    fn from_str(hex_code: &str) -> Result<Self, Self::Err> {
+        let r: u8 = u8::from_str_radix(&hex_code[1..3], 16)?;
+        let g: u8 = u8::from_str_radix(&hex_code[3..5], 16)?;
+        let b: u8 = u8::from_str_radix(&hex_code[5..7], 16)?;
+
+        Ok(RGB { r, g, b })
+    }
+}
+
 struct ImageData {
-    data: Vec<Color>,
+    data: Vec<RGB>,
     width: u32,
     height: u32,
 }
@@ -279,27 +320,15 @@ impl Node {
     }
 }
 
-#[derive(Debug, Clone, Eq, Hash, PartialEq)]
-pub struct Color(pub u8, pub u8, pub u8);
-
-impl Color {
-    pub fn to_hex(&self) -> String {
-        let r = format!("{:0>2}", format!("{:X}", self.0));
-        let g = format!("{:0>2}", format!("{:X}", self.1));
-        let b = format!("{:0>2}", format!("{:X}", self.1));
-        format!("#{}{}{}", r, g, b)
-    }
-}
-
 #[derive(Debug)]
 pub struct Record {
-    color: Color,
+    rgb: RGB,
     count: u32,
 }
 
 impl Record {
-    pub fn color(&self) -> &Color {
-        &self.color
+    pub fn rgb(&self) -> &RGB {
+        &self.rgb
     }
     pub fn count(&self) -> u32 {
         self.count

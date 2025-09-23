@@ -1,6 +1,6 @@
 [package]
 name = "image-palette"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
 license = "MIT"
 description = "A Rust library for automatically extracting prominent color palettes from images."
@@ -12,3 +12,7 @@ homepage = "https://github.com/siminx/image_palette"
 
 [dependencies]
 image = "0.25"
+lab = { version = "0.11", optional = true }
+
+[features]
+lab = ["dep:lab"]
