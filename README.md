@@ -22,8 +22,8 @@ Here is a basic example that demonstrates how to extract the color palette and f
 fn main() {
   let (colors, width, height) = image_palette::load("test.jpg").unwrap();
   println!("total: {}", width * height);
-  for item in colors {
-    println!("{}:{}", item.color().to_hex(), item.count());
+  for color in colors {
+    println!("{}:{}", item.rgb().to_hex(), item.count());
   }
 }
 ```
