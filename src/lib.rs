@@ -9,7 +9,7 @@ use image::{
 
 mod error;
 
-/// Open the image located at the path specified, return 8 dominant colors.
+/// Open the image located at the path specified, return 16 dominant colors.
 ///
 /// # Examples
 /// ```
@@ -23,24 +23,24 @@ pub fn load<P>(path: P) -> Result<(Vec<Record>, u32, u32), ImageError>
 where
     P: AsRef<Path>,
 {
-    OcTree::load_with_maxcolor(path, 8)
+    OcTree::load_with_maxcolor(path, 16)
 }
 
 /// Open the image located at the path specified, return {max_color} dominant colors.
 ///
 /// # Examples
 /// ```
-/// let (colors, width, height) = image_palette::load_with_maxcolor("test.jpg", 16).unwrap();
+/// let (colors, width, height) = image_palette::load_with_maxcolor("test.jpg", 8).unwrap();
 /// println!("total: {}", width * height);
 /// for color in colors {
 ///   println!("{}: {}", color.rgb().to_hex(), color.count());
 /// }
 /// ```
-pub fn load_with_maxcolor<P>(path: P, max_color: u32) -> Result<(Vec<Record>, u32, u32), ImageError>
+pub fn load_with_maxcolor<P>(path: P, max_color: u8) -> Result<(Vec<Record>, u32, u32), ImageError>
 where
     P: AsRef<Path>,
 {
-    OcTree::load_with_maxcolor(path, max_color)
+    OcTree::load_with_maxcolor(path, max_color.into())
 }
 
 #[derive(Debug)]

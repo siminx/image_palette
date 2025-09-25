@@ -1,6 +1,6 @@
 [package]
 name = "image-palette"
-version = "0.1.7"
+version = "0.1.8"
 edition = "2021"
 license = "MIT"
 description = "A Rust library for automatically extracting prominent color palettes from images."
