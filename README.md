@@ -23,7 +23,7 @@ fn main() {
   let (colors, width, height) = image_palette::load("test.jpg").unwrap();
   println!("total: {}", width * height);
   for color in colors {
-    println!("{}:{}", item.rgb().to_hex(), item.count());
+    println!("{}:{}", color.rgb().to_hex(), color.count());
   }
 }
 ```
