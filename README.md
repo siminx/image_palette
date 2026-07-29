@@ -10,7 +10,7 @@ To use `image-palette` in your Rust project, add it to your `Cargo.toml`.
 
 ```toml
 [dependencies]
-image-palette = "0.1"
+image-palette = "0.2"
 ```
 
 ## Usage

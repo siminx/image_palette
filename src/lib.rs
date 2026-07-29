@@ -40,7 +40,7 @@ pub fn load_with_maxcolor<P>(path: P, max_color: u8) -> Result<(Vec<Record>, u32
 where
     P: AsRef<Path>,
 {
-    OcTree::load_with_maxcolor(path, max_color.into())
+    OcTree::load_with_maxcolor(path, max_color)
 }
 
 /// Open the image with image crate, return {max_color} dominant colors.
@@ -56,9 +56,9 @@ where
 /// ```
 pub fn load_by_image_with_maxcolor(
     image: &DynamicImage,
-    max_color: u32,
+    max_color: u8,
 ) -> Result<(Vec<Record>, u32, u32), ImageError> {
-    OcTree::load_by_image(image, max_color)
+    Ok(OcTree::load_by_image(image, max_color.into()))
 }
 
 #[derive(Debug)]
@@ -69,7 +69,7 @@ struct OcTree {
 }
 
 impl OcTree {
-    fn load_with_maxcolor<P>(path: P, max_color: u32) -> Result<(Vec<Record>, u32, u32), ImageError>
+    fn load_with_maxcolor<P>(path: P, max_color: u8) -> Result<(Vec<Record>, u32, u32), ImageError>
     where
         P: AsRef<Path>,
     {
@@ -79,20 +79,19 @@ impl OcTree {
             error => ImageError::Unknown(error),
         })?;
 
-        Self::load_by_image(&image, max_color)
+        Ok(Self::load_by_image(&image, max_color.into()))
     }
 
-    fn load_by_image(
-        image: &DynamicImage,
-        max_color: u32,
-    ) -> Result<(Vec<Record>, u32, u32), ImageError> {
+    fn load_by_image(image: &DynamicImage, max_color: u32) -> (Vec<Record>, u32, u32) {
         const ARRAY_REPEAT_VALUE: Vec<Rc<RefCell<Node>>> = Vec::new();
         let mut tree = OcTree {
             leaf_num: 0,
             to_reduce: [ARRAY_REPEAT_VALUE; 8],
             max_color,
         };
-        let image_data = ImageData::try_from(image)?;
+
+        let rgb = image.to_rgb8();
+        let image_data = ImageData::from(&rgb);
 
         let root_share = tree.create_node(0);
 
@@ -110,7 +109,7 @@ impl OcTree {
             list.push(Record { rgb, count });
         }
         list.sort_by(|a, b| b.count.cmp(&a.count));
-        Ok((list, image_data.width, image_data.height))
+        (list, image_data.width, image_data.height)
     }
 
     fn create_node(&mut self, level: usize) -> Rc<RefCell<Node>> {
@@ -214,18 +213,6 @@ fn colors_stats(node_share: &Rc<RefCell<Node>>, map: &mut HashMap<RGB, u32>) {
             if node.children[i].is_some() {
                 colors_stats(node.children[i].as_ref().unwrap(), map);
             }
-        }
-    }
-}
-
-impl TryFrom<&DynamicImage> for ImageData {
-    type Error = ImageError;
-
-    fn try_from(image: &DynamicImage) -> Result<Self, Self::Error> {
-        match image {
-            image::DynamicImage::ImageRgb8(image) => Ok(ImageData::from(image)),
-            image::DynamicImage::ImageRgba8(image) => Ok(ImageData::from(image)),
-            _ => Err(ImageError::UnsupportedType(image.color())),
         }
     }
 }
