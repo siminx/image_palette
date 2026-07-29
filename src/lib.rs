@@ -43,6 +43,24 @@ where
     OcTree::load_with_maxcolor(path, max_color.into())
 }
 
+/// Open the image with image crate, return {max_color} dominant colors.
+///
+/// # Examples
+/// ```
+/// let image = image::open("test.jpg").unwrap();
+/// let (colors, width, height) = image_palette::load_by_image_with_maxcolor(&image, 8).unwrap();
+/// println!("total: {}", width * height);
+/// for color in colors {
+///   println!("{}: {}", color.rgb().to_hex(), color.count());
+/// }
+/// ```
+pub fn load_by_image_with_maxcolor(
+    image: &DynamicImage,
+    max_color: u32,
+) -> Result<(Vec<Record>, u32, u32), ImageError> {
+    OcTree::load_by_image(image, max_color)
+}
+
 #[derive(Debug)]
 struct OcTree {
     leaf_num: u32,
@@ -55,27 +73,31 @@ impl OcTree {
     where
         P: AsRef<Path>,
     {
-        const ARRAY_REPEAT_VALUE: Vec<Rc<RefCell<Node>>> = Vec::new();
-        let mut tree = OcTree {
-            leaf_num: 0,
-            to_reduce: [ARRAY_REPEAT_VALUE; 8],
-            max_color,
-        };
-
         let image = image::open(path).map_err(|error| match error {
             Unsupported(error) => ImageError::UnsupportedFile(error),
             IoError(error) => ImageError::IoError(error),
             error => ImageError::Unknown(error),
         })?;
 
-        let image_data = ImageData::try_from(&image)?;
+        Self::load_by_image(&image, max_color)
+    }
 
-        let root = Node::new();
-        let root_share: Rc<RefCell<Node>> = Rc::new(RefCell::new(root));
+    fn load_by_image(
+        image: &DynamicImage,
+        max_color: u32,
+    ) -> Result<(Vec<Record>, u32, u32), ImageError> {
+        const ARRAY_REPEAT_VALUE: Vec<Rc<RefCell<Node>>> = Vec::new();
+        let mut tree = OcTree {
+            leaf_num: 0,
+            to_reduce: [ARRAY_REPEAT_VALUE; 8],
+            max_color,
+        };
+        let image_data = ImageData::try_from(image)?;
+
+        let root_share = tree.create_node(0);
 
         for color in image_data.data {
             tree.add_color(&root_share, color, 0);
-
             while tree.leaf_num > tree.max_color {
                 tree.reduce_tree();
             }
