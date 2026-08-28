@@ -2,7 +2,7 @@ use std::{cell::RefCell, collections::HashMap, path::Path, rc::Rc, str::FromStr}
 
 use error::ImageError;
 use image::{
-    DynamicImage,
+    DynamicImage, GenericImageView,
     ImageError::{IoError, Unsupported},
     RgbImage, RgbaImage,
 };
@@ -130,7 +130,64 @@ pub fn load_by_image_with_options(
     image: &DynamicImage,
     options: &PaletteOptions,
 ) -> Result<(Vec<Record>, u32, u32), ImageError> {
-    let (mut list, width, height) = OcTree::load_by_image(image, options.extract_max as u32);
+    let (list, width, height) = OcTree::load_by_image(image, options.extract_max as u32);
+    apply_options(list, width, height, options, false)
+}
+
+/// 使用默认 [`PaletteOptions`] 对大图进行加权网格采样后提取主色。
+///
+/// 当图片像素数不超过 `max_samples` 时会自动回退到完整逐像素算法。
+pub fn load_by_image_sampled(
+    image: &DynamicImage,
+    max_samples: u32,
+) -> Result<(Vec<Record>, u32, u32), ImageError> {
+    load_by_image_sampled_with_options(image, &PaletteOptions::default(), max_samples)
+}
+
+/// 按配置提取主色，并将大图限制在不超过 `max_samples` 个采样点。
+///
+/// 大图会按原始长宽比分成确定性分层网格，每格读取中心像素，并以该格实际
+/// 覆盖的像素面积作为 OctTree 权重。此过程不会复制或 resize 整张图片。
+/// 当总像素数不超过采样上限时，直接调用现有逐像素实现以保持原有输出。
+pub fn load_by_image_sampled_with_options(
+    image: &DynamicImage,
+    options: &PaletteOptions,
+    max_samples: u32,
+) -> Result<(Vec<Record>, u32, u32), ImageError> {
+    if max_samples == 0 {
+        return Err(ImageError::InvalidParameter);
+    }
+
+    let width = image.width();
+    let height = image.height();
+    let total_pixels = width as u64 * height as u64;
+    if total_pixels <= max_samples as u64 {
+        return load_by_image_with_options(image, options);
+    }
+    // Record 的公开 count 是 u32，无法无损表达更大的总权重。
+    if total_pixels > u32::MAX as u64 {
+        return Err(ImageError::InvalidParameter);
+    }
+
+    let (list, width, height) =
+        OcTree::load_by_image_sampled(image, options.extract_max as u32, max_samples);
+    apply_options(list, width, height, options, true)
+}
+
+/// 执行所有 API 共用的合并、过滤和截断步骤。
+///
+/// 采样 API 在等权重颜色之间增加 RGB 次序，以免 HashMap 的随机迭代顺序
+/// 影响合并、截断或最终输出；旧 API 继续沿用原排序行为。
+fn apply_options(
+    mut list: Vec<Record>,
+    width: u32,
+    height: u32,
+    options: &PaletteOptions,
+    deterministic_order: bool,
+) -> Result<(Vec<Record>, u32, u32), ImageError> {
+    if deterministic_order {
+        list.sort_by(compare_record_rgb);
+    }
 
     #[cfg(feature = "lab")]
     {
@@ -149,11 +206,24 @@ pub fn load_by_image_with_options(
     if options.min_ratio > 0.0 {
         list.retain(|r| r.count as f32 / total * 100.0 >= options.min_ratio);
     }
-    list.sort_by(|a, b| b.count.cmp(&a.count));
+    if deterministic_order {
+        list.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| compare_record_rgb(a, b)));
+    } else {
+        list.sort_by(|a, b| b.count.cmp(&a.count));
+    }
     if list.len() > options.output_max as usize {
         list.truncate(options.output_max as usize);
     }
     Ok((list, width, height))
+}
+
+/// 为采样结果提供稳定的 RGB 字典序。
+fn compare_record_rgb(a: &Record, b: &Record) -> std::cmp::Ordering {
+    a.rgb
+        .r
+        .cmp(&b.rgb.r)
+        .then_with(|| a.rgb.g.cmp(&b.rgb.g))
+        .then_with(|| a.rgb.b.cmp(&b.rgb.b))
 }
 
 /// 基于 CIELAB ΔE 的相近色层次聚类合并（质心链接）。
@@ -307,6 +377,52 @@ impl OcTree {
         (list, image_data.width, image_data.height)
     }
 
+    /// 直接从 DynamicImage 的确定性分层网格构建加权 OctTree。
+    fn load_by_image_sampled(
+        image: &DynamicImage,
+        max_color: u32,
+        max_samples: u32,
+    ) -> (Vec<Record>, u32, u32) {
+        let (width, height) = image.dimensions();
+        let (columns, rows) = sampling_grid_dimensions(width, height, max_samples);
+        let mut tree = OcTree {
+            leaf_num: 0,
+            to_reduce: std::array::from_fn(|_| Vec::new()),
+            max_color,
+        };
+        let root_share = tree.create_node(0);
+
+        for row in 0..rows {
+            let y_start = partition_boundary(row, height, rows);
+            let y_end = partition_boundary(row + 1, height, rows);
+            let y = y_start + (y_end - y_start) / 2;
+
+            for column in 0..columns {
+                let x_start = partition_boundary(column, width, columns);
+                let x_end = partition_boundary(column + 1, width, columns);
+                let x = x_start + (x_end - x_start) / 2;
+                let weight = (x_end - x_start) * (y_end - y_start);
+
+                // DynamicImage::get_pixel 负责把 8/16-bit、float、灰度等常见
+                // 类型统一转换为 RGBA8；与现有 to_rgb8 一样忽略 alpha 通道。
+                let pixel = image.get_pixel(x, y);
+                let color = RGB::from(&[pixel[0], pixel[1], pixel[2]]);
+                tree.add_color_weighted(&root_share, color, 0, weight);
+                while tree.leaf_num > tree.max_color {
+                    tree.reduce_tree();
+                }
+            }
+        }
+
+        let mut map: HashMap<RGB, u32> = HashMap::new();
+        colors_stats(&root_share, &mut map);
+        let list = map
+            .into_iter()
+            .map(|(rgb, count)| Record { rgb, count })
+            .collect();
+        (list, width, height)
+    }
+
     fn create_node(&mut self, level: usize) -> Rc<RefCell<Node>> {
         let node = Node::new();
         let node_share: Rc<RefCell<Node>> = Rc::new(RefCell::new(node));
@@ -325,12 +441,23 @@ impl OcTree {
     }
 
     fn add_color(&mut self, node_share: &Rc<RefCell<Node>>, rgb: RGB, level: usize) {
+        self.add_color_weighted(node_share, rgb, level, 1);
+    }
+
+    /// 将一个代表像素及其覆盖面积一次性加入 OctTree。
+    fn add_color_weighted(
+        &mut self,
+        node_share: &Rc<RefCell<Node>>,
+        rgb: RGB,
+        level: usize,
+        weight: u32,
+    ) {
         let mut node: std::cell::RefMut<Node> = node_share.borrow_mut();
         if node.is_leaf {
-            node.pixel_count += 1;
-            node.r += rgb.r as u32;
-            node.g += rgb.g as u32;
-            node.b += rgb.b as u32;
+            node.pixel_count += weight;
+            node.r += rgb.r as u64 * weight as u64;
+            node.g += rgb.g as u64 * weight as u64;
+            node.b += rgb.b as u64 * weight as u64;
         } else {
             let r = rgb.r >> (7 - level) & 1;
             let g = rgb.g >> (7 - level) & 1;
@@ -343,7 +470,7 @@ impl OcTree {
                 node.children[idx] = Some(child_share);
             }
 
-            self.add_color(node.children[idx].as_ref().unwrap(), rgb, level + 1);
+            self.add_color_weighted(node.children[idx].as_ref().unwrap(), rgb, level + 1, weight);
         }
     }
 
@@ -391,12 +518,57 @@ impl OcTree {
     }
 }
 
+/// 计算尽量保持图片长宽比、且采样点数不超过上限的网格尺寸。
+///
+/// 两轴都按同一缩放比例收缩；极宽或极高图片因短边至少保留一格而超限时，
+/// 再收紧长边。全程使用整数运算，保证跨运行得到相同网格。
+fn sampling_grid_dimensions(width: u32, height: u32, max_samples: u32) -> (u32, u32) {
+    debug_assert!(width > 0 && height > 0 && max_samples > 0);
+
+    let mut columns =
+        integer_sqrt(max_samples as u64 * width as u64 / height as u64).clamp(1, width);
+    let mut rows = integer_sqrt(max_samples as u64 * height as u64 / width as u64).clamp(1, height);
+
+    if columns as u64 * rows as u64 > max_samples as u64 {
+        if width >= height {
+            columns = (max_samples / rows).max(1);
+        } else {
+            rows = (max_samples / columns).max(1);
+        }
+    }
+
+    debug_assert!(columns as u64 * rows as u64 <= max_samples as u64);
+    (columns, rows)
+}
+
+/// 返回 u64 的向下取整平方根，避免浮点舍入影响网格确定性。
+fn integer_sqrt(value: u64) -> u32 {
+    let mut left = 0u64;
+    let mut right = value.min(u32::MAX as u64);
+    let mut result = 0u64;
+    while left <= right {
+        let middle = left + (right - left) / 2;
+        if middle == 0 || middle <= value / middle {
+            result = middle;
+            left = middle + 1;
+        } else {
+            right = middle - 1;
+        }
+    }
+    result as u32
+}
+
+/// 通过整数边界把一条轴完整且无重叠地分给所有网格。
+fn partition_boundary(index: u32, length: u32, partitions: u32) -> u32 {
+    (index as u64 * length as u64 / partitions as u64) as u32
+}
+
 fn colors_stats(node_share: &Rc<RefCell<Node>>, map: &mut HashMap<RGB, u32>) {
     let node = node_share.borrow_mut();
     if node.is_leaf {
-        let r = (node.r / node.pixel_count) as u8;
-        let g = (node.g / node.pixel_count) as u8;
-        let b = (node.b / node.pixel_count) as u8;
+        let r = (node.r / node.pixel_count as u64) as u8;
+        let g = (node.g / node.pixel_count as u64) as u8;
+        let b = (node.b / node.pixel_count as u64) as u8;
         let rgb = RGB::from(&[r, g, b]);
         if let Some(x) = map.get_mut(&rgb) {
             *x = *x + node.pixel_count;
@@ -503,9 +675,9 @@ struct ImageData {
 #[derive(Debug)]
 struct Node {
     is_leaf: bool,
-    r: u32,
-    g: u32,
-    b: u32,
+    r: u64,
+    g: u64,
+    b: u64,
     pixel_count: u32,
     children: [Option<Rc<RefCell<Node>>>; 8],
 }
