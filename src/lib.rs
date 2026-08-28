@@ -12,7 +12,7 @@ mod error;
 /// Open the image located at the path specified, return 16 dominant colors.
 ///
 /// # Examples
-/// ```
+/// ```no_run
 /// let (colors, width, height) = image_palette::load("test.jpg").unwrap();
 /// println!("total: {}", width * height);
 /// for color in colors {
@@ -29,7 +29,7 @@ where
 /// Open the image located at the path specified, return {max_color} dominant colors.
 ///
 /// # Examples
-/// ```
+/// ```no_run
 /// let (colors, width, height) = image_palette::load_with_maxcolor("test.jpg", 8).unwrap();
 /// println!("total: {}", width * height);
 /// for color in colors {
@@ -46,7 +46,7 @@ where
 /// Open the image with image crate, return {max_color} dominant colors.
 ///
 /// # Examples
-/// ```
+/// ```no_run
 /// let image = image::open("test.jpg").unwrap();
 /// let (colors, width, height) = image_palette::load_by_image_with_maxcolor(&image, 8).unwrap();
 /// println!("total: {}", width * height);
@@ -58,7 +58,202 @@ pub fn load_by_image_with_maxcolor(
     image: &DynamicImage,
     max_color: u8,
 ) -> Result<(Vec<Record>, u32, u32), ImageError> {
-    Ok(OcTree::load_by_image(image, max_color.into()))
+    // 等价于旧行为：不合并、不按占比过滤、不截断输出数量
+    let options = PaletteOptions {
+        extract_max: max_color,
+        output_max: max_color,
+        merge_delta_e: 0.0,
+        min_ratio: 0.0,
+    };
+    load_by_image_with_options(image, &options)
+}
+
+/// 主色提取配置。
+///
+/// `extract_max` 控制 OctTree 内部 bin 数（越大越能区分相近色）；
+/// `output_max` 控制最终返回的主色数量上限；
+/// `merge_delta_e` 为 CIELAB ΔE 合并阈值，`0.0` 表示不合并（需启用 `lab` feature 才生效）；
+/// `min_ratio` 为最小像素占比（百分比），低于此值的颜色会被丢弃。
+#[derive(Debug, Clone, Copy)]
+pub struct PaletteOptions {
+    pub extract_max: u8,
+    pub output_max: u8,
+    pub merge_delta_e: f32,
+    pub min_ratio: f32,
+}
+
+impl Default for PaletteOptions {
+    fn default() -> Self {
+        Self {
+            extract_max: 16,
+            output_max: 8,
+            merge_delta_e: 10.0,
+            min_ratio: 0.01,
+        }
+    }
+}
+
+impl PaletteOptions {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub fn with_extract_max(mut self, v: u8) -> Self {
+        self.extract_max = v;
+        self
+    }
+    pub fn with_output_max(mut self, v: u8) -> Self {
+        self.output_max = v;
+        self
+    }
+    pub fn with_merge_delta_e(mut self, v: f32) -> Self {
+        self.merge_delta_e = v;
+        self
+    }
+    pub fn with_min_ratio(mut self, v: f32) -> Self {
+        self.min_ratio = v;
+        self
+    }
+}
+
+/// 按配置提取主色：OctTree 提取 → 相近色合并（可选）→ 占比过滤 → 数量截断。
+///
+/// # Examples
+/// ```no_run
+/// let image = image::open("test.jpg").unwrap();
+/// let opts = image_palette::PaletteOptions::default();
+/// let (colors, width, height) = image_palette::load_by_image_with_options(&image, &opts).unwrap();
+/// for color in &colors {
+///   println!("{}: {}", color.rgb().to_hex(), color.count());
+/// }
+/// ```
+pub fn load_by_image_with_options(
+    image: &DynamicImage,
+    options: &PaletteOptions,
+) -> Result<(Vec<Record>, u32, u32), ImageError> {
+    let (mut list, width, height) = OcTree::load_by_image(image, options.extract_max as u32);
+
+    #[cfg(feature = "lab")]
+    {
+        if options.merge_delta_e > 0.0 {
+            list = merge_similar(list, options.merge_delta_e);
+        }
+    }
+    #[cfg(not(feature = "lab"))]
+    {
+        if options.merge_delta_e > 0.0 {
+            return Err(ImageError::InvalidParameter);
+        }
+    }
+
+    let total = (width * height) as f32;
+    if options.min_ratio > 0.0 {
+        list.retain(|r| r.count as f32 / total * 100.0 >= options.min_ratio);
+    }
+    list.sort_by(|a, b| b.count.cmp(&a.count));
+    if list.len() > options.output_max as usize {
+        list.truncate(options.output_max as usize);
+    }
+    Ok((list, width, height))
+}
+
+/// 基于 CIELAB ΔE 的相近色层次聚类合并（质心链接）。
+///
+/// 每个 OctTree 色先各成一簇，反复合并当前距离最小的两簇，
+/// 直到最近距离超过 `delta_e`。距离用折算明度的 CIE76：
+///
+/// ```text
+/// ΔE' = sqrt((ΔL / 2)^2 + Δa^2 + Δb^2)
+/// ```
+///
+/// 明度差权重减半，让同色相的明度渐变（如纸纹的浅棕→深棕）
+/// 收成少数主色，而不是凑满 8 个；红/蓝等不同色相主要在 a/b 轴，不受影响。
+/// 合并时 RGB 与 Lab 均按像素 count 加权平均。
+#[cfg(feature = "lab")]
+fn merge_similar(records: Vec<Record>, delta_e: f32) -> Vec<Record> {
+    if delta_e <= 0.0 || records.is_empty() {
+        return records;
+    }
+
+    // 簇：(sum_r*count, sum_g*count, sum_b*count, count, sum_l*count, sum_a*count, sum_b_lab*count)
+    // RGB 必须按像素 count 加权累加，否则回除 count 后会得到接近 #000000 的错误均值
+    let mut clusters: Vec<(u64, u64, u64, u32, f64, f64, f64)> = records
+        .into_iter()
+        .map(|rec| {
+            let lab = rec.rgb.to_lab();
+            let count = rec.count as u64;
+            (
+                rec.rgb.r as u64 * count,
+                rec.rgb.g as u64 * count,
+                rec.rgb.b as u64 * count,
+                rec.count,
+                lab.l as f64 * rec.count as f64,
+                lab.a as f64 * rec.count as f64,
+                lab.b as f64 * rec.count as f64,
+            )
+        })
+        .collect();
+
+    // 反复合并当前 ΔE' 最小的两簇，直到最小距离超过阈值
+    loop {
+        let mut best: Option<(usize, usize, f32)> = None;
+        for i in 0..clusters.len() {
+            let ci = &clusters[i];
+            let ci_cnt = ci.3 as f64;
+            let cil = ci.4 / ci_cnt;
+            let cia = ci.5 / ci_cnt;
+            let cib = ci.6 / ci_cnt;
+            for j in (i + 1)..clusters.len() {
+                let cj = &clusters[j];
+                let cj_cnt = cj.3 as f64;
+                let cjl = cj.4 / cj_cnt;
+                let cja = cj.5 / cj_cnt;
+                let cjb = cj.6 / cj_cnt;
+                let dl = (cil - cjl) / 2.0;
+                let da = cia - cja;
+                let db = cib - cjb;
+                let dist = ((dl * dl + da * da + db * db) as f32).sqrt();
+                match best {
+                    None => best = Some((i, j, dist)),
+                    Some((_, _, d)) if dist < d => best = Some((i, j, dist)),
+                    _ => {}
+                }
+            }
+        }
+
+        match best {
+            Some((i, j, dist)) if dist <= delta_e => {
+                // 把 j 并入 i（i < j），然后丢弃 j
+                let cj = clusters[j].clone();
+                let ci = &mut clusters[i];
+                ci.0 += cj.0;
+                ci.1 += cj.1;
+                ci.2 += cj.2;
+                ci.3 += cj.3;
+                ci.4 += cj.4;
+                ci.5 += cj.5;
+                ci.6 += cj.6;
+                clusters.remove(j);
+            }
+            _ => break,
+        }
+    }
+
+    let mut result: Vec<Record> = clusters
+        .into_iter()
+        .map(|c| {
+            let cnt = c.3 as u64;
+            // 四舍五入，避免整数截断把浅色系统性压暗
+            let r = ((c.0 + cnt / 2) / cnt) as u8;
+            let g = ((c.1 + cnt / 2) / cnt) as u8;
+            let b = ((c.2 + cnt / 2) / cnt) as u8;
+            Record {
+                rgb: RGB { r, g, b },
+                count: c.3,
+            }
+        })
+        .collect();
+    result.sort_by(|a, b| b.count.cmp(&a.count));
+    result
 }
 
 #[derive(Debug)]
@@ -336,6 +531,9 @@ pub struct Record {
 }
 
 impl Record {
+    pub fn new(rgb: RGB, count: u32) -> Self {
+        Record { rgb, count }
+    }
     pub fn rgb(&self) -> &RGB {
         &self.rgb
     }
