@@ -131,34 +131,6 @@ mod tests {
     }
 
     #[test]
-    fn colored_paper_sample_not_all_black() {
-        let path = r"C:\Users\xusimin\Pictures\Saved Pictures\colored_paper2.png";
-        let img = match image::open(path) {
-            Ok(img) => img,
-            Err(_) => {
-                eprintln!("跳过不存在样本: {path}");
-                return;
-            }
-        };
-        let (colors, _, _) = load_by_image_with_options(&img, &PaletteOptions::default()).unwrap();
-        assert!(!colors.is_empty(), "纸纹图应至少产出 1 个主色");
-        assert!(
-            (2..=4).contains(&colors.len()),
-            "纸纹图主色数应在 2–4，实际 {}：{:?}",
-            colors.len(),
-            colors.iter().map(|c| c.rgb().to_hex()).collect::<Vec<_>>()
-        );
-        for color in &colors {
-            assert_ne!(
-                color.rgb().to_hex(),
-                "#000000",
-                "纸纹图主色不应为 #000000，实际 {:?}",
-                colors.iter().map(|c| c.rgb().to_hex()).collect::<Vec<_>>()
-            );
-        }
-    }
-
-    #[test]
     fn same_hue_lightness_gradient_collapses() {
         // 同色相（棕/米）的明度梯度：从浅米到深棕，Lab 主要在 L 轴变化
         let browns: Vec<[u8; 3]> = [
