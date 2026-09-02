@@ -202,7 +202,12 @@ fn apply_options(
         }
     }
 
-    let total = (width * height) as f32;
+    // 透明像素已被跳过，占比相对可见像素而非整图尺寸
+    let visible_total: u32 = list.iter().map(|r| r.count).sum();
+    if visible_total == 0 {
+        return Ok((Vec::new(), width, height));
+    }
+    let total = visible_total as f32;
     if options.min_ratio > 0.0 {
         list.retain(|r| r.count as f32 / total * 100.0 >= options.min_ratio);
     }
@@ -355,8 +360,9 @@ impl OcTree {
             max_color,
         };
 
-        let rgb = image.to_rgb8();
-        let image_data = ImageData::from(&rgb);
+        // 走 RgbaImage 路径以跳过 alpha=0 的透明像素，避免透明黑被当成 #000000
+        let rgba = image.to_rgba8();
+        let image_data = ImageData::from(&rgba);
 
         let root_share = tree.create_node(0);
 
@@ -403,9 +409,11 @@ impl OcTree {
                 let x = x_start + (x_end - x_start) / 2;
                 let weight = (x_end - x_start) * (y_end - y_start);
 
-                // DynamicImage::get_pixel 负责把 8/16-bit、float、灰度等常见
-                // 类型统一转换为 RGBA8；与现有 to_rgb8 一样忽略 alpha 通道。
+                // get_pixel 统一为 RGBA8；alpha=0 的格不参与主色统计
                 let pixel = image.get_pixel(x, y);
+                if pixel[3] == 0 {
+                    continue;
+                }
                 let color = RGB::from(&[pixel[0], pixel[1], pixel[2]]);
                 tree.add_color_weighted(&root_share, color, 0, weight);
                 while tree.leaf_num > tree.max_color {

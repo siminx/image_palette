@@ -336,7 +336,77 @@ mod sampled_tests {
         )
         .unwrap()
         .0;
-        assert_eq!(normalized(&records), vec![(0, 0, 255, 2), (255, 0, 0, 2)]);
+        assert_eq!(normalized(&records), vec![(0, 0, 255, 2)]);
+        assert!(
+            !records.iter().any(|r| r.rgb().to_hex() == "#000000"),
+            "全透明像素不应被当成黑色主色"
+        );
+    }
+
+    #[test]
+    fn full_path_skips_transparent_background() {
+        let mut image = RgbaImage::new(10, 10);
+        for y in 0..10 {
+            for x in 0..10 {
+                image.put_pixel(x, y, Rgba([0, 0, 0, 0]));
+            }
+        }
+        for y in 4..6 {
+            for x in 4..6 {
+                image.put_pixel(x, y, Rgba([255, 0, 0, 255]));
+            }
+        }
+
+        let (records, width, height) = load_by_image_with_options(
+            &DynamicImage::ImageRgba8(image),
+            &unmerged_options(),
+        )
+        .unwrap();
+        assert_eq!((width, height), (10, 10));
+        assert_eq!(normalized(&records), vec![(255, 0, 0, 4)]);
+        assert!(
+            !records.iter().any(|r| r.rgb().to_hex() == "#000000"),
+            "透明背景不应产生黑色主色"
+        );
+    }
+
+    #[test]
+    fn fully_transparent_image_returns_empty_palette() {
+        let image = RgbaImage::from_pixel(8, 8, Rgba([0, 0, 0, 0]));
+        let (records, width, height) = load_by_image_with_options(
+            &DynamicImage::ImageRgba8(image),
+            &unmerged_options(),
+        )
+        .unwrap();
+        assert_eq!((width, height), (8, 8));
+        assert!(records.is_empty());
+    }
+
+    #[test]
+    fn opaque_rgb_image_covers_all_pixels() {
+        let mut image = RgbImage::new(10, 1);
+        for x in 0..10 {
+            image.put_pixel(
+                x,
+                0,
+                if x < 6 {
+                    Rgb([255, 0, 0])
+                } else {
+                    Rgb([0, 0, 255])
+                },
+            );
+        }
+
+        let (records, _, _) = load_by_image_with_options(
+            &DynamicImage::ImageRgb8(image),
+            &unmerged_options(),
+        )
+        .unwrap();
+        assert_eq!(
+            records.iter().map(Record::count).sum::<u32>(),
+            10,
+            "不透明 RGB 图 count 之和应等于全部像素"
+        );
     }
 
     #[test]

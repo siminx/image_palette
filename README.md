@@ -48,13 +48,21 @@ similar-color merging, ratio filtering and output size via [`PaletteOptions`].
 | `extract_max`     | `16`    | OctTree internal bin count. Larger values distinguish closer colors.       |
 | `output_max`      | `8`     | Maximum number of colors returned.                                         |
 | `merge_delta_e`   | `10.0`  | CIELAB ΔE merge threshold. `0.0` disables merging. Requires the `lab` feature. |
-| `min_ratio`       | `0.01`  | Minimum pixel ratio (in percent). Colors below this are dropped.           |
+| `min_ratio`       | `0.01`  | Minimum pixel ratio (in percent) relative to **visible** (non-transparent) pixels. Colors below this are dropped. |
+
+### Transparency
+
+Pixels with `alpha == 0` are excluded from extraction. Semi-transparent pixels
+(`alpha > 0`) are included using their RGB values. This prevents transparent
+backgrounds (common in SVG/PNG) from being counted as black. `Record.count`
+values sum to the number of visible pixels only; returned `width`/`height`
+remain the full image dimensions. Fully transparent images yield an empty palette.
 
 ### Default usage
 
 `PaletteOptions::default()` extracts up to 16 colors with the octree, merges
 similar colors via agglomerative clustering, drops colors below `0.01%` of
-pixels, and returns at most 8 colors. Images with a flat or monotonous
+visible pixels, and returns at most 8 colors. Images with a flat or monotonous
 palette will naturally yield fewer than 8 colors.
 
 Merging is **agglomerative clustering with centroid linkage**: every octree
